@@ -1,11 +1,14 @@
 use std::collections::HashMap;
 use std::error::Error;
+use std::fs;
 use std::ops::{Add, AddAssign};
 use std::time::Duration;
 use termgame::{
     run_game, Controller, Game, GameColor as Color, GameEvent, GameSettings, GameStyle as Style,
     KeyCode, Message, SimpleEvent, StyledCharacter, ViewportLocation,
 };
+
+use serde::{Deserialize, Serialize};
 
 const PLAYER_ICON: char = '☻';
 
@@ -36,7 +39,7 @@ impl Place {
         }
     }
     fn is_water(&self) -> bool {
-        if let Some(b) = self.background {
+        if let Some(b) = &self.background {
             b.is_water()
         } else {
             false
@@ -44,7 +47,7 @@ impl Place {
     }
 
     fn is_barrier(&self) -> bool {
-        if let Some(b) = self.background {
+        if let Some(b) = &self.background {
             b.is_barrier()
         } else {
             false
@@ -58,12 +61,12 @@ impl Into<StyledCharacter> for &Place {
         if self.player {
             c.c = PLAYER_ICON;
         }
-        c.style = self.background.map(BackgroundVariant::into);
+        c.style = self.background.as_ref().map(<&BackgroundVariant>::into);
         return c;
     }
 }
 
-#[derive(Copy, Clone, Default, Debug, Eq, Hash, PartialEq)]
+#[derive(Copy, Clone, Default, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 struct Position(i32, i32);
 
 impl Into<ViewportLocation> for Position {
@@ -111,19 +114,15 @@ struct Player {
 }
 
 impl Player {
-    // fn new() -> Self {
-    //     Self::default()
-    // }
-
     fn move_to(&mut self, position: Position) {
         self.position = position;
         self.update_draw = true;
     }
 
-    fn move_by(&mut self, x: i32, y: i32) {
-        self.position += &Position(x, y);
-        self.update_draw = true;
-    }
+    // fn move_by(&mut self, x: i32, y: i32) {
+    //     self.position += &Position(x, y);
+    //     self.update_draw = true;
+    // }
 
     fn interact_background(&mut self, map: &MapPlace) {
         if map.is_water(self.position) {
@@ -133,64 +132,50 @@ impl Player {
         self.oxygen = PLAYER_INIT_OXYGEN;
     }
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 enum BackgroundVariant {
     Grass,
     Sand,
-    Rocks,
+    Rock,
     Cinderblock,
-    Flowers,
-    Obstacle,
+    Flowerbush,
+    Barrier,
     Water,
+    Sign(String),
+    Object(char),
 }
 
 impl BackgroundVariant {
     fn is_barrier(&self) -> bool {
-        self == &BackgroundVariant::Obstacle
+        self == &BackgroundVariant::Barrier
     }
     fn is_water(&self) -> bool {
         self == &BackgroundVariant::Water
     }
 }
 
-impl Into<Color> for BackgroundVariant {
+impl Into<Color> for &BackgroundVariant {
     fn into(self) -> Color {
         match self {
-            Self::Grass => Color::Green,
-            Self::Sand => Color::LightYellow,
-            Self::Rocks => Color::DarkGray,
-            Self::Cinderblock => Color::LightRed,
-            Self::Flowers => Color::LightMagenta,
-            Self::Obstacle => Color::Black,
-            Self::Water => Color::LightBlue,
+            &BackgroundVariant::Grass => Color::Green,
+            &BackgroundVariant::Sand => Color::LightYellow,
+            &BackgroundVariant::Rock => Color::DarkGray,
+            &BackgroundVariant::Cinderblock => Color::LightRed,
+            &BackgroundVariant::Flowerbush => Color::LightMagenta,
+            &BackgroundVariant::Barrier => Color::Black,
+            &BackgroundVariant::Water => Color::LightBlue,
+            _ => panic!("Unknown background"),
         }
     }
 }
 
-impl Into<Style> for BackgroundVariant {
+impl Into<Style> for &BackgroundVariant {
     fn into(self) -> Style {
         Style::new().background_color(Some(self.into()))
     }
 }
 
-#[derive(Debug)]
-struct BackgroundBlock {
-    // update_draw: bool,
-    variant: BackgroundVariant,
-    position: Position,
-    // previous_position: Option<Position>,
-}
-
-impl BackgroundBlock {
-    fn new(variant: BackgroundVariant, position: Position) -> Self {
-        BackgroundBlock {
-            // update_draw: true,
-            variant,
-            position,
-            // previous_position: None,
-        }
-    }
-}
+type RawGameMap = HashMap<Position, BackgroundVariant>;
 
 impl Default for Player {
     fn default() -> Self {
@@ -263,22 +248,6 @@ impl MapPlace {
         player.update_draw = false;
         self.should_draw.push(player.position);
     }
-    fn update_background(&mut self, background: &mut BackgroundBlock) {
-        // background won't move (for now)
-        // if let Some(position) = background.previous_position.take() {
-        //     if let Some(place) = self.map.get_mut(&position) {
-        //         place.background = None;
-        //     }
-        //     self.should_draw.push(position);
-        // }
-        self.map
-            .entry(background.position)
-            .and_modify(|place| {
-                place.background = Some(background.variant);
-            })
-            .or_insert_with(|| Place::default().background(Some(background.variant)));
-        self.should_draw.push(background.position);
-    }
 
     fn draw(&mut self, game: &mut Game) {
         for position in self.should_draw.drain(..) {
@@ -305,6 +274,28 @@ impl MapPlace {
     }
 }
 
+impl From<&RawGameMap> for MapPlace {
+    fn from(raw_game_map: &RawGameMap) -> Self {
+        let mut map_place: MapPlace = Default::default();
+        for (&position, variant) in raw_game_map {
+            match variant {
+                // unimplemented
+                &BackgroundVariant::Object(_) | &BackgroundVariant::Sign(_) => continue,
+                _ => {}
+            }
+            map_place
+                .map
+                .entry(position)
+                .and_modify(|place| {
+                    place.background = Some(variant.clone());
+                })
+                .or_insert_with(|| Place::default().background(Some(variant.clone())));
+            map_place.should_draw.push(position);
+        }
+        map_place
+    }
+}
+
 #[derive(Default)]
 enum GameStatus {
     #[default]
@@ -313,107 +304,127 @@ enum GameStatus {
 }
 
 #[derive(Default)]
-struct MyGame {
+struct GameVar {
     game_status: GameStatus,
     control: Control,
-    // test: bool,
-    viewport_size: (u16, (u16, u16)),
     viewport_position: Position,
-    text: String,
-    // message: Message,
-    // show_text: bool,
+    message: Option<(String, String)>,
+    show_message: bool,
     frame: i32,
     player: Player,
-    blocks: Vec<BackgroundBlock>,
     map_place: MapPlace,
 }
 
+struct GameStatic {
+    raw_game_map: RawGameMap,
+    screen_size: (u16, (u16, u16)),
+}
+
+struct MyGame {
+    game_var: GameVar,
+    game_static: GameStatic,
+}
+
 impl MyGame {
-    fn init(&mut self) {
-        self.blocks = vec![
-            BackgroundBlock::new(BackgroundVariant::Grass, Position(5, 6)),
-            BackgroundBlock::new(BackgroundVariant::Sand, Position(6, 8)),
-            BackgroundBlock::new(BackgroundVariant::Sand, Position(6, 9)),
-            BackgroundBlock::new(BackgroundVariant::Rocks, Position(5, 10)),
-            BackgroundBlock::new(BackgroundVariant::Rocks, Position(5, 11)),
-            BackgroundBlock::new(BackgroundVariant::Cinderblock, Position(9, 20)),
-            BackgroundBlock::new(BackgroundVariant::Cinderblock, Position(9, 19)),
-            BackgroundBlock::new(BackgroundVariant::Flowers, Position(10, 20)),
-            BackgroundBlock::new(BackgroundVariant::Flowers, Position(11, 20)),
-            BackgroundBlock::new(BackgroundVariant::Obstacle, Position(10, 10)),
-            BackgroundBlock::new(BackgroundVariant::Obstacle, Position(11, 10)),
-            BackgroundBlock::new(BackgroundVariant::Obstacle, Position(10, 11)),
-            BackgroundBlock::new(BackgroundVariant::Obstacle, Position(11, 11)),
-            BackgroundBlock::new(BackgroundVariant::Obstacle, Position(11, 12)),
-            BackgroundBlock::new(BackgroundVariant::Obstacle, Position(11, 13)),
-            BackgroundBlock::new(BackgroundVariant::Water, Position(15, 10)),
-            BackgroundBlock::new(BackgroundVariant::Water, Position(15, 11)),
-            BackgroundBlock::new(BackgroundVariant::Water, Position(15, 12)),
-            BackgroundBlock::new(BackgroundVariant::Water, Position(16, 11)),
-            BackgroundBlock::new(BackgroundVariant::Water, Position(16, 12)),
-            BackgroundBlock::new(BackgroundVariant::Water, Position(16, 13)),
-        ];
+    fn new(raw_game_map: RawGameMap) -> Self {
+        let game_static = GameStatic {
+            raw_game_map,
+            screen_size: Default::default(),
+        };
+        Self {
+            game_var: Default::default(),
+            game_static,
+        }
+    }
+
+    fn init(&mut self, game: &Game) {
+        self.game_static.screen_size = game.screen_size();
+        self.game_var = GameVar {
+            map_place: MapPlace::from(&self.game_static.raw_game_map),
+            ..Default::default()
+        }
     }
 
     fn update_player_position(&mut self) {
-        let move_by = Position::from(&self.control);
+        let GameVar {
+            ref control,
+            ref mut player,
+            ref mut map_place,
+            ..
+        } = self.game_var;
+        let move_by = Position::from(control);
         if move_by.is_origin() {
             return;
         }
-        let next = self.player.position + move_by;
-        if self.map_place.is_barrier(next) {
+        let next = player.position + move_by;
+        if map_place.is_barrier(next) {
             // cannot move into barrier
             return;
         }
-        self.player.move_to(next);
-        self.player.interact_background(&self.map_place);
+        player.move_to(next);
+        player.interact_background(map_place);
     }
     fn update_viewport_position(&mut self) {
-        let pos = &self.player.position;
-        let left = pos.0 - self.viewport_position.0;
-        let top = pos.1 - self.viewport_position.1;
-        let right =
-            self.viewport_position.0 + self.viewport_size.0 as i32 - 2 - self.player.position.0;
-        let bottom = self.viewport_position.1
-            + self.viewport_size.1 .0 as i32
-            + self.viewport_size.1 .1 as i32
+        let GameStatic {
+            screen_size: (width, (game_height, message_height)),
+            ..
+        } = self.game_static;
+        let GameVar {
+            ref player,
+            ref mut viewport_position,
+            ..
+        } = self.game_var;
+        let Position(x, y) = player.position;
+
+        let left = x - viewport_position.0;
+        let top = y - viewport_position.1;
+        let right = viewport_position.0 + width as i32 - 2 - x;
+        let bottom = viewport_position.1 + game_height as i32 + message_height as i32
             - 3
-            - self.player.position.1;
+            - y;
         if left < VIEW_PADDING {
-            self.viewport_position.0 -= 1;
+            viewport_position.0 -= 1;
         }
         if top < VIEW_PADDING {
-            self.viewport_position.1 -= 1;
+            viewport_position.1 -= 1;
         }
         if right < VIEW_PADDING {
-            self.viewport_position.0 += 1;
+            viewport_position.0 += 1;
         }
         if bottom < VIEW_PADDING {
-            self.viewport_position.1 += 1;
+            viewport_position.1 += 1;
         }
-        self.text = format!("top: {top}, left: {left}, bottom: {bottom}, right: {right}");
+        // self.text = format!("top: {top}, left: {left}, bottom: {bottom}, right: {right}");
     }
 }
 
 impl Controller for MyGame {
     fn on_start(&mut self, game: &mut Game) {
-        self.init();
-        game.set_message(None);
-        self.player.move_to(Position(3, 3));
-        self.viewport_size = game.screen_size();
+        self.init(game);
 
-        self.map_place.update_player(&mut self.player);
-        for b in &mut self.blocks {
-            self.map_place.update_background(b);
-        }
+        let GameVar {
+            ref mut player,
+            ref mut map_place,
+            ..
+        } = self.game_var;
+        player.move_to(Position(3, 3));
+
+        map_place
+            .update_player(player);
     }
 
     fn on_event(&mut self, game: &mut Game, event: GameEvent) {
-        match self.game_status {
+        let GameVar {
+            ref mut control,
+            ref mut show_message,
+            ref game_status,
+            ..
+        } = self.game_var;
+        match game_status {
             GameStatus::Died => {
                 match event.into() {
                     SimpleEvent::Just(KeyCode::Enter) => {
-                        *self = Default::default();
+                        self.init(game);
                         self.on_start(game);
                     }
                     _ => {}
@@ -427,7 +438,8 @@ impl Controller for MyGame {
             SimpleEvent::Just(key_code) => match key_code {
                 KeyCode::Char(ch) => match ch {
                     't' => {
-                        self.text = format!("vp: {:?}", game.screen_size());
+                        // self.text = format!("vp: {:?}", game.screen_size());
+                        *show_message = !*show_message;
                     }
                     _ => {}
                 },
@@ -435,16 +447,16 @@ impl Controller for MyGame {
                 //     self.show_text = !self.show_text;
                 // }
                 KeyCode::Left => {
-                    self.control.left = true;
+                    control.left = true;
                 }
                 KeyCode::Right => {
-                    self.control.right = true;
+                    control.right = true;
                 }
                 KeyCode::Up => {
-                    self.control.up = true;
+                    control.up = true;
                 }
                 KeyCode::Down => {
-                    self.control.down = true;
+                    control.down = true;
                 }
                 _ => {}
             },
@@ -456,11 +468,24 @@ impl Controller for MyGame {
         self.update_player_position();
         self.update_viewport_position();
 
-        self.map_place.update_player(&mut self.player);
-        self.map_place.draw(game);
+        let GameVar {
+            ref mut player,
+            ref mut map_place,
+            ref mut control,
+            ref viewport_position,
+            ref mut message,
+            ref mut frame,
+            ref mut show_message,
+            ref mut game_status,
+            ..
+        } = self.game_var;
 
-        self.control.clear();
-        game.set_viewport(self.viewport_position.into());
+        map_place
+            .update_player(player);
+        map_place.draw(game);
+
+        control.clear();
+        game.set_viewport(<Position>::into(*viewport_position));
 
         // let f = format!(
         //     "player on {}, oxygen {:2}.",
@@ -475,23 +500,43 @@ impl Controller for MyGame {
         //     game.set_screen_char(30 + i as i32, 10, Some(StyledCharacter::new(ch)));
         // }
 
-        if self.player.oxygen <= 0 {
-            game.set_message(Some(
-                Message::new("You died from drown, press Enter to restart.".into()).title("You Died".into()),
+        // Debug Message:
+        *message = Some((
+            "Test".into(),
+            format!(
+                "Pos: {}",
+                ron::to_string(&player.position).unwrap()
+            ),
+        ));
+
+        if player.oxygen <= 0 {
+            *message = Some((
+                "You Died".into(),
+                "You died from drown, press Enter to restart.".into(),
             ));
-            self.game_status = GameStatus::Died;
+            *show_message = true;
+            *game_status = GameStatus::Died;
         }
 
+        if *show_message {
+            if let Some((title, text)) = &message {
+                let msg = Message::new(text.clone()).title(title.clone());
+                game.set_message(Some(msg));
+            }
+        } else {
+            game.set_message(None);
+        }
 
-
-        // if self.show_text {
-        //     game.set_message(Some(Message::new(self.text.clone())));
-        // } else {
-        //     game.set_message(None);
-        // }
-
-        self.frame += 1;
+        *frame += 1;
     }
+}
+
+fn read_map_data() -> Result<RawGameMap, Box<dyn Error>> {
+    // let path = "../maps/full_game.ron";
+    let path = "../maps/testing_game.ron";
+    let content = fs::read_to_string(path)?;
+    let game_map = ron::from_str::<RawGameMap>(&content)?;
+    Ok(game_map)
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -499,7 +544,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("To get started, you should read the termgame documentation,");
     println!("and try out getting a termgame UI to appear on your terminal.");
 
-    let mut controller = MyGame::default();
+    let game_map = read_map_data()?;
+
+    let mut controller = MyGame::new(game_map);
 
     run_game(
         &mut controller,
