@@ -1,6 +1,7 @@
 # Terminal game demo
 
 Write in rust, run in terminals
+
 Current work: map render and player interact.
 
 ### Run

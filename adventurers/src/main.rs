@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fs;
 use std::ops::{Add, AddAssign};
@@ -22,47 +22,81 @@ const PLAYER_INIT_OXYGEN: i32 = 10;
 //     Background(BackgroundVariant),
 // }
 
+type RawGameMap = HashMap<Position, BackgroundVariant>;
+
 #[derive(Default)]
-struct Place {
-    player: bool,
-    background: Option<BackgroundVariant>,
+struct MapLayers {
+    player: Position,
+    objects: HashMap<Position, char>,
+    backgrounds: HashMap<Position, Color>,
+    should_draw: Vec<Position>,
+    waters: HashSet<Position>,
+    barriers: HashSet<Position>,
 }
 
-impl Place {
-    fn player(self, player: bool) -> Self {
-        Self { player, ..self }
-    }
-    fn background(self, background: Option<BackgroundVariant>) -> Self {
-        Self {
-            background: background,
-            ..self
+impl MapLayers {
+    fn get(&self, position: &Position) -> Option<StyledCharacter> {
+        let mut sc = StyledCharacter::new(' ');
+
+        if let Some(&c) = self.objects.get(position) {
+            sc.c = c;
         }
-    }
-    fn is_water(&self) -> bool {
-        if let Some(b) = &self.background {
-            b.is_water()
-        } else {
-            false
+
+        if let Some(&color) = self.backgrounds.get(position) {
+            sc.style = Some(Style::new().background_color(Some(color)));
         }
+
+        if self.player == *position {
+            sc.c = PLAYER_ICON;
+        }
+
+        Some(sc)
     }
 
-    fn is_barrier(&self) -> bool {
-        if let Some(b) = &self.background {
-            b.is_barrier()
-        } else {
-            false
+    fn update_player(&mut self, player: &mut Player) {
+        if !player.update_draw {
+            return;
         }
+        if let Some(position) = player.previous_position.take() {
+            self.should_draw.push(position);
+        }
+        let position = player.position;
+
+        self.player = position;
+        player.previous_position = Some(position);
+        self.should_draw.push(position);
+        player.update_draw = false;
+    }
+    fn is_barrier(&self, position: &Position) -> bool {
+        self.barriers.contains(position)
+    }
+    fn is_water(&self, position: &Position) -> bool {
+        self.waters.contains(position)
+    }
+    fn get_style_characters(&mut self) -> Vec<(Position, Option<StyledCharacter>)> {
+        let positions = self.should_draw.drain(..).collect::<Vec<_>>();
+        positions.into_iter().map(|position| (position, self.get(&position))).collect()
     }
 }
 
-impl Into<StyledCharacter> for &Place {
-    fn into(self) -> StyledCharacter {
-        let mut c = StyledCharacter::new(' ');
-        if self.player {
-            c.c = PLAYER_ICON;
+impl From<&RawGameMap> for MapLayers {
+    fn from(raw_game_map: &RawGameMap) -> Self {
+        let mut map_layers = MapLayers::default();
+        for (position, background) in raw_game_map {
+            match background {
+                &BackgroundVariant::Object(_) | &BackgroundVariant::Sign(_) => continue,
+                _ => {}
+            }
+            if background.is_barrier() {
+                map_layers.barriers.insert(*position);
+            }
+            if background.is_water() {
+                map_layers.waters.insert(*position);
+            }
+            map_layers.backgrounds.insert(*position, background.into());
+            map_layers.should_draw.push(*position);
         }
-        c.style = self.background.as_ref().map(<&BackgroundVariant>::into);
-        return c;
+        map_layers
     }
 }
 
@@ -124,8 +158,8 @@ impl Player {
     //     self.update_draw = true;
     // }
 
-    fn interact_background(&mut self, map: &MapPlace) {
-        if map.is_water(self.position) {
+    fn interact_background(&mut self, map: &MapLayers) {
+        if map.is_water(&self.position) {
             self.oxygen -= 1;
             return;
         }
@@ -175,8 +209,6 @@ impl Into<Style> for &BackgroundVariant {
     }
 }
 
-type RawGameMap = HashMap<Position, BackgroundVariant>;
-
 impl Default for Player {
     fn default() -> Self {
         Player {
@@ -224,79 +256,6 @@ impl From<&Control> for Position {
 }
 
 #[derive(Default)]
-struct MapPlace {
-    should_draw: Vec<Position>,
-    map: HashMap<Position, Place>,
-}
-
-impl MapPlace {
-    fn update_player(&mut self, player: &mut Player) {
-        if !player.update_draw {
-            return;
-        }
-        if let Some(position) = player.previous_position.take() {
-            if let Some(place) = self.map.get_mut(&position) {
-                place.player = false;
-            }
-            self.should_draw.push(position);
-        }
-        self.map
-            .entry(player.position)
-            .and_modify(|place| place.player = true)
-            .or_insert_with(|| Place::default().player(true));
-        player.previous_position = Some(player.position);
-        player.update_draw = false;
-        self.should_draw.push(player.position);
-    }
-
-    fn draw(&mut self, game: &mut Game) {
-        for position in self.should_draw.drain(..) {
-            let Position(x, y) = position;
-            let place = self.map.get(&position);
-            game.set_screen_char(x, y, place.map(<&Place>::into));
-        }
-    }
-
-    fn is_water(&self, position: Position) -> bool {
-        if let Some(place) = self.map.get(&position) {
-            place.is_water()
-        } else {
-            false
-        }
-    }
-
-    fn is_barrier(&self, position: Position) -> bool {
-        if let Some(place) = self.map.get(&position) {
-            place.is_barrier()
-        } else {
-            false
-        }
-    }
-}
-
-impl From<&RawGameMap> for MapPlace {
-    fn from(raw_game_map: &RawGameMap) -> Self {
-        let mut map_place: MapPlace = Default::default();
-        for (&position, variant) in raw_game_map {
-            match variant {
-                // unimplemented
-                &BackgroundVariant::Object(_) | &BackgroundVariant::Sign(_) => continue,
-                _ => {}
-            }
-            map_place
-                .map
-                .entry(position)
-                .and_modify(|place| {
-                    place.background = Some(variant.clone());
-                })
-                .or_insert_with(|| Place::default().background(Some(variant.clone())));
-            map_place.should_draw.push(position);
-        }
-        map_place
-    }
-}
-
-#[derive(Default)]
 enum GameStatus {
     #[default]
     Running,
@@ -312,7 +271,7 @@ struct GameVar {
     show_message: bool,
     frame: i32,
     player: Player,
-    map_place: MapPlace,
+    map_layers: MapLayers,
 }
 
 struct GameStatic {
@@ -340,7 +299,7 @@ impl MyGame {
     fn init(&mut self, game: &Game) {
         self.game_static.screen_size = game.screen_size();
         self.game_var = GameVar {
-            map_place: MapPlace::from(&self.game_static.raw_game_map),
+            map_layers: MapLayers::from(&self.game_static.raw_game_map),
             ..Default::default()
         }
     }
@@ -349,7 +308,7 @@ impl MyGame {
         let GameVar {
             ref control,
             ref mut player,
-            ref mut map_place,
+            ref map_layers,
             ..
         } = self.game_var;
         let move_by = Position::from(control);
@@ -357,12 +316,12 @@ impl MyGame {
             return;
         }
         let next = player.position + move_by;
-        if map_place.is_barrier(next) {
+        if map_layers.is_barrier(&next) {
             // cannot move into barrier
             return;
         }
         player.move_to(next);
-        player.interact_background(map_place);
+        player.interact_background(map_layers);
     }
     fn update_viewport_position(&mut self) {
         let GameStatic {
@@ -379,9 +338,7 @@ impl MyGame {
         let left = x - viewport_position.0;
         let top = y - viewport_position.1;
         let right = viewport_position.0 + width as i32 - 2 - x;
-        let bottom = viewport_position.1 + game_height as i32 + message_height as i32
-            - 3
-            - y;
+        let bottom = viewport_position.1 + game_height as i32 + message_height as i32 - 3 - y;
         if left < VIEW_PADDING {
             viewport_position.0 -= 1;
         }
@@ -404,13 +361,12 @@ impl Controller for MyGame {
 
         let GameVar {
             ref mut player,
-            ref mut map_place,
+            ref mut map_layers,
             ..
         } = self.game_var;
         player.move_to(Position(3, 3));
 
-        map_place
-            .update_player(player);
+        map_layers.update_player(player);
     }
 
     fn on_event(&mut self, game: &mut Game, event: GameEvent) {
@@ -470,7 +426,7 @@ impl Controller for MyGame {
 
         let GameVar {
             ref mut player,
-            ref mut map_place,
+            ref mut map_layers,
             ref mut control,
             ref viewport_position,
             ref mut message,
@@ -480,9 +436,11 @@ impl Controller for MyGame {
             ..
         } = self.game_var;
 
-        map_place
-            .update_player(player);
-        map_place.draw(game);
+        map_layers.update_player(player);
+
+        for (Position(x, y), sc) in map_layers.get_style_characters() {
+            game.set_screen_char(x, y, sc);
+        }
 
         control.clear();
         game.set_viewport(<Position>::into(*viewport_position));
