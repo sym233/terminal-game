@@ -1,157 +1,25 @@
-use std::collections::{HashMap, HashSet};
 use std::error::Error;
-use std::fs;
 use std::time::Duration;
 
-use termgame::{
-    run_game, Controller, Game, GameColor as Color, GameEvent, GameSettings, GameStyle as Style,
-    KeyCode, SimpleEvent, StyledCharacter,
-};
+use termgame::{run_game, Controller, Game, GameEvent, GameSettings, KeyCode, SimpleEvent};
 
 mod utils;
-use utils::{Position, Control, MessageType, BackgroundVariant};
+use utils::{Control, MessageType, Position};
 
-const PLAYER_ICON: char = '☻';
-const FLAG: char = '⚑';
+mod map;
+use map::{RawGameMap, read_map_data, MapLayers};
+
+mod player;
+use player::Player;
 
 /// if distance between player and border < padding, move viewport
 const VIEW_PADDING: i32 = 2;
-const PLAYER_INIT_OXYGEN: i32 = 10;
 
 // #[derive(Debug, Clone, Copy)]
 // enum ObjectVariant {
 //     Player,
 //     Background(BackgroundVariant),
 // }
-
-type RawGameMap = HashMap<Position, BackgroundVariant>;
-
-#[derive(Default)]
-struct MapLayers {
-    player: Position,
-    objects: HashMap<Position, char>,
-    signs: HashMap<Position, String>,
-    backgrounds: HashMap<Position, Color>,
-    should_draw: Vec<Position>,
-    waters: HashSet<Position>,
-    barriers: HashSet<Position>,
-}
-
-impl MapLayers {
-    fn get(&self, position: &Position) -> Option<StyledCharacter> {
-        let mut sc = StyledCharacter::new(' ');
-
-        if let Some(&c) = self.objects.get(position) {
-            sc.c = c;
-        }
-
-        if self.signs.contains_key(position) {
-            sc.c = FLAG;
-        }
-
-        if let Some(&color) = self.backgrounds.get(position) {
-            sc.style = Some(Style::new().background_color(Some(color)));
-        }
-
-        if self.player == *position {
-            sc.c = PLAYER_ICON;
-        }
-
-        Some(sc)
-    }
-
-    fn update_player(&mut self, player: &mut Player) {
-        if !player.update_draw {
-            return;
-        }
-        if let Some(position) = player.previous_position.take() {
-            self.should_draw.push(position);
-        }
-        let position = player.position;
-
-        self.player = position;
-        player.previous_position = Some(position);
-        self.should_draw.push(position);
-        player.update_draw = false;
-    }
-    fn is_barrier(&self, position: &Position) -> bool {
-        self.barriers.contains(position)
-    }
-    fn is_water(&self, position: &Position) -> bool {
-        self.waters.contains(position)
-    }
-    fn get_style_characters(&mut self) -> Vec<(Position, Option<StyledCharacter>)> {
-        let positions = self.should_draw.drain(..).collect::<Vec<_>>();
-        positions.into_iter().map(|position| (position, self.get(&position))).collect()
-    }
-}
-
-impl From<&RawGameMap> for MapLayers {
-    fn from(raw_game_map: &RawGameMap) -> Self {
-        let mut map_layers = MapLayers::default();
-        for (position, background) in raw_game_map {
-            if background.is_barrier() {
-                map_layers.barriers.insert(*position);
-            }
-            if background.is_water() {
-                map_layers.waters.insert(*position);
-            }
-            if let Some(color) = background.into() {
-                map_layers.backgrounds.insert(*position, color);
-            }
-            if let BackgroundVariant::Object(c) = background {
-                map_layers.objects.insert(*position, *c);
-            }
-            if let BackgroundVariant::Sign(s) = background {
-                map_layers.signs.insert(*position, s.clone());
-            }
-            map_layers.should_draw.push(*position);
-        }
-        map_layers
-    }
-}
-
-struct Player {
-    update_draw: bool,
-    // icon: char,
-    position: Position,
-    bag: Vec<char>,
-    oxygen: i32,
-    previous_position: Option<Position>,
-}
-
-impl Player {
-    fn move_to(&mut self, position: Position) {
-        self.position = position;
-        self.update_draw = true;
-    }
-
-    // fn move_by(&mut self, x: i32, y: i32) {
-    //     self.position += &Position(x, y);
-    //     self.update_draw = true;
-    // }
-
-    fn interact_background(&mut self, map: &MapLayers) {
-        if map.is_water(&self.position) {
-            self.oxygen -= 1;
-            return;
-        }
-        self.oxygen = PLAYER_INIT_OXYGEN;
-    }
-}
-
-impl Default for Player {
-    fn default() -> Self {
-        Player {
-            update_draw: true,
-            // icon: PLAYER_CHAR,
-            position: Position::default(),
-            bag: Default::default(),
-            previous_position: None,
-            oxygen: PLAYER_INIT_OXYGEN,
-        }
-    }
-}
 
 #[derive(Default)]
 enum GameStatus {
@@ -344,15 +212,15 @@ impl Controller for MyGame {
                                     *message = MessageType::None;
                                 } else {
                                     *message = MessageType::Bag(format!("{:?}", player.bag));
-                                } 
+                                }
                             }
                             _ => {}
-                        };                    
+                        };
                     }
                     _ => {}
                 };
                 control.update(key_code);
-            },
+            }
             _ => {}
         }
     }
@@ -379,35 +247,15 @@ impl Controller for MyGame {
 
         control.clear();
         game.set_viewport(<Position>::into(*viewport_position));
-
-        // let f = format!(
-        //     "player on {}, oxygen {:2}.",
-        //     if self.map_place
-        //         .map
-        //         .get(&self.player.position)
-        //         .map(|p| p.water)
-        //         .unwrap() { "water" } else { "other" },
-        //     self.player.oxygen
-        // );
-        // for (i, ch) in f.chars().enumerate() {
-        //     game.set_screen_char(30 + i as i32, 10, Some(StyledCharacter::new(ch)));
-        // }
         game.set_message((&*message).into());
 
         *frame += 1;
     }
 }
 
-fn read_map_data() -> Result<RawGameMap, Box<dyn Error>> {
-    // let path = "../maps/full_game.ron";
-    let path = "../maps/testing_game.ron";
-    let content = fs::read_to_string(path)?;
-    let game_map = ron::from_str::<RawGameMap>(&content)?;
-    Ok(game_map)
-}
-
 fn main() -> Result<(), Box<dyn Error>> {
-    let game_map = read_map_data()?;
+    // let game_map = read_map_data("../maps/full_game.ron")?;
+    let game_map = read_map_data("../maps/testing_game.ron")?;
 
     let mut controller = MyGame::new(game_map);
 
@@ -417,8 +265,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             .tick_duration(Duration::from_millis(50))
             .quit_event(Some(SimpleEvent::WithControl(KeyCode::Char('c')).into())),
     )?;
-
     println!("Game Ended!");
-
     Ok(())
 }
