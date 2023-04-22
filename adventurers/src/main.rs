@@ -1,14 +1,15 @@
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fs;
-use std::ops::{Add, AddAssign};
 use std::time::Duration;
+
 use termgame::{
     run_game, Controller, Game, GameColor as Color, GameEvent, GameSettings, GameStyle as Style,
-    KeyCode, Message, SimpleEvent, StyledCharacter, ViewportLocation,
+    KeyCode, SimpleEvent, StyledCharacter,
 };
 
-use serde::{Deserialize, Serialize};
+mod utils;
+use utils::{Position, Control, MessageType, BackgroundVariant};
 
 const PLAYER_ICON: char = '☻';
 const FLAG: char = '⚑';
@@ -110,45 +111,6 @@ impl From<&RawGameMap> for MapLayers {
     }
 }
 
-#[derive(Copy, Clone, Default, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
-struct Position(i32, i32);
-
-impl Into<ViewportLocation> for Position {
-    fn into(self) -> ViewportLocation {
-        ViewportLocation {
-            x: self.0,
-            y: self.1,
-        }
-    }
-}
-
-impl Position {
-    fn is_origin(&self) -> bool {
-        self.0 == 0 && self.1 == 0
-    }
-}
-
-impl Add for Position {
-    type Output = Self;
-    fn add(self, rhs: Self) -> Self::Output {
-        Position(self.0 + rhs.0, self.1 + rhs.1)
-    }
-}
-
-impl<'a> Add<&'a Position> for &'a Position {
-    type Output = Position;
-    fn add(self, rhs: Self) -> Self::Output {
-        Position(self.0 + rhs.0, self.1 + rhs.1)
-    }
-}
-
-impl AddAssign<&Position> for Position {
-    fn add_assign(&mut self, rhs: &Self) {
-        self.0 += rhs.0;
-        self.1 += rhs.1;
-    }
-}
-
 struct Player {
     update_draw: bool,
     // icon: char,
@@ -177,48 +139,6 @@ impl Player {
         self.oxygen = PLAYER_INIT_OXYGEN;
     }
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-enum BackgroundVariant {
-    Grass,
-    Sand,
-    Rock,
-    Cinderblock,
-    Flowerbush,
-    Barrier,
-    Water,
-    Sign(String),
-    Object(char),
-}
-
-impl BackgroundVariant {
-    fn is_barrier(&self) -> bool {
-        self == &BackgroundVariant::Barrier
-    }
-    fn is_water(&self) -> bool {
-        self == &BackgroundVariant::Water
-    }
-}
-
-impl Into<Option<Color>> for &BackgroundVariant {
-    fn into(self) -> Option<Color> {
-        Some(match self {
-            &BackgroundVariant::Grass => Color::Green,
-            &BackgroundVariant::Sand => Color::LightYellow,
-            &BackgroundVariant::Rock => Color::DarkGray,
-            &BackgroundVariant::Cinderblock => Color::LightRed,
-            &BackgroundVariant::Flowerbush => Color::LightMagenta,
-            &BackgroundVariant::Barrier => Color::Black,
-            &BackgroundVariant::Water => Color::LightBlue,
-            _ => return None,
-        })
-    }
-}
-
-impl Into<Style> for &BackgroundVariant {
-    fn into(self) -> Style {
-        Style::new().background_color(self.into())
-    }
-}
 
 impl Default for Player {
     fn default() -> Self {
@@ -234,55 +154,10 @@ impl Default for Player {
 }
 
 #[derive(Default)]
-struct Control {
-    up: bool,
-    down: bool,
-    left: bool,
-    right: bool,
-}
-
-impl Control {
-    fn clear(&mut self) {
-        *self = Self::default();
-    }
-}
-
-impl From<&Control> for Position {
-    fn from(control: &Control) -> Self {
-        let mut x = 0;
-        let mut y = 0;
-        if control.left {
-            x -= 1;
-        }
-        if control.right {
-            x += 1;
-        }
-        if control.up {
-            y -= 1;
-        }
-        if control.down {
-            y += 1;
-        }
-        return Position(x, y);
-    }
-}
-
-#[derive(Default)]
 enum GameStatus {
     #[default]
     Running,
     Died,
-}
-
-#[derive(Default)]
-enum MessageType {
-    Death(String),
-    Sign(String),
-    Debug(String),
-    Pickup(char),
-    Bag(String),
-    #[default]
-    None,
 }
 
 #[derive(Default)]
@@ -448,45 +323,35 @@ impl Controller for MyGame {
         }
 
         match event.into() {
-            SimpleEvent::Just(key_code) => match key_code {
-                KeyCode::Char(ch) => match ch {
-                    't' => {
-                        // debug message
-                        if let MessageType::Debug(_) = message {
-                            *message = MessageType::None;
-                        } else {
-                            *message = MessageType::Debug(format!(
-                                "player pos: {}",
-                                ron::to_string(&player.position).unwrap()
-                            ));
-                        }
-                    }
-                    'b' => {
-                        // check bag
-                        if let MessageType::Bag(_) = message {
-                            *message = MessageType::None;
-                        } else {
-                            *message = MessageType::Bag(format!("{:?}", player.bag));
-                        } 
+            SimpleEvent::Just(key_code) => {
+                match key_code {
+                    KeyCode::Char(ch) => {
+                        match ch {
+                            't' => {
+                                // debug message
+                                if let MessageType::Debug(_) = message {
+                                    *message = MessageType::None;
+                                } else {
+                                    *message = MessageType::Debug(format!(
+                                        "player pos: {}",
+                                        ron::to_string(&player.position).unwrap()
+                                    ));
+                                }
+                            }
+                            'b' => {
+                                // check bag
+                                if let MessageType::Bag(_) = message {
+                                    *message = MessageType::None;
+                                } else {
+                                    *message = MessageType::Bag(format!("{:?}", player.bag));
+                                } 
+                            }
+                            _ => {}
+                        };                    
                     }
                     _ => {}
-                },
-                // KeyCode::Enter => {
-                //     self.show_text = !self.show_text;
-                // }
-                KeyCode::Left => {
-                    control.left = true;
-                }
-                KeyCode::Right => {
-                    control.right = true;
-                }
-                KeyCode::Up => {
-                    control.up = true;
-                }
-                KeyCode::Down => {
-                    control.down = true;
-                }
-                _ => {}
+                };
+                control.update(key_code);
             },
             _ => {}
         }
@@ -527,32 +392,7 @@ impl Controller for MyGame {
         // for (i, ch) in f.chars().enumerate() {
         //     game.set_screen_char(30 + i as i32, 10, Some(StyledCharacter::new(ch)));
         // }
-
-        match message {
-            MessageType::Sign(s) => {
-                let msg = Message::new(s.clone()).title("You saw a message on the sign".into());
-                game.set_message(Some(msg));
-            }
-            MessageType::Death(s) => {
-                let msg = Message::new(s.clone()).title("You died".into());
-                game.set_message(Some(msg));
-            }
-            MessageType::Pickup(c) => {
-                let msg = Message::new(format!("You pick up '{c}'")).title("Pick up an object".into());
-                game.set_message(Some(msg));
-            }
-            MessageType::Bag(s) => {
-                let msg = Message::new(s.clone()).title("Your bag has".into());
-                game.set_message(Some(msg));
-            }
-            MessageType::Debug(s) => {
-                let msg = Message::new(s.clone()).title("Debug".into());
-                game.set_message(Some(msg));
-            }
-            MessageType::None => {
-                game.set_message(None);
-            }
-        }
+        game.set_message((&*message).into());
 
         *frame += 1;
     }
