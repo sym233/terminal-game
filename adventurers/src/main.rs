@@ -11,6 +11,7 @@ use termgame::{
 use serde::{Deserialize, Serialize};
 
 const PLAYER_ICON: char = '☻';
+const FLAG: char = '⚑';
 
 /// if distance between player and border < padding, move viewport
 const VIEW_PADDING: i32 = 2;
@@ -28,6 +29,7 @@ type RawGameMap = HashMap<Position, BackgroundVariant>;
 struct MapLayers {
     player: Position,
     objects: HashMap<Position, char>,
+    signs: HashMap<Position, String>,
     backgrounds: HashMap<Position, Color>,
     should_draw: Vec<Position>,
     waters: HashSet<Position>,
@@ -40,6 +42,10 @@ impl MapLayers {
 
         if let Some(&c) = self.objects.get(position) {
             sc.c = c;
+        }
+
+        if self.signs.contains_key(position) {
+            sc.c = FLAG;
         }
 
         if let Some(&color) = self.backgrounds.get(position) {
@@ -83,17 +89,21 @@ impl From<&RawGameMap> for MapLayers {
     fn from(raw_game_map: &RawGameMap) -> Self {
         let mut map_layers = MapLayers::default();
         for (position, background) in raw_game_map {
-            match background {
-                &BackgroundVariant::Object(_) | &BackgroundVariant::Sign(_) => continue,
-                _ => {}
-            }
             if background.is_barrier() {
                 map_layers.barriers.insert(*position);
             }
             if background.is_water() {
                 map_layers.waters.insert(*position);
             }
-            map_layers.backgrounds.insert(*position, background.into());
+            if let Some(color) = background.into() {
+                map_layers.backgrounds.insert(*position, color);
+            }
+            if let BackgroundVariant::Object(c) = background {
+                map_layers.objects.insert(*position, *c);
+            }
+            if let BackgroundVariant::Sign(s) = background {
+                map_layers.signs.insert(*position, s.clone());
+            }
             map_layers.should_draw.push(*position);
         }
         map_layers
@@ -143,6 +153,7 @@ struct Player {
     update_draw: bool,
     // icon: char,
     position: Position,
+    bag: Vec<char>,
     oxygen: i32,
     previous_position: Option<Position>,
 }
@@ -188,9 +199,9 @@ impl BackgroundVariant {
     }
 }
 
-impl Into<Color> for &BackgroundVariant {
-    fn into(self) -> Color {
-        match self {
+impl Into<Option<Color>> for &BackgroundVariant {
+    fn into(self) -> Option<Color> {
+        Some(match self {
             &BackgroundVariant::Grass => Color::Green,
             &BackgroundVariant::Sand => Color::LightYellow,
             &BackgroundVariant::Rock => Color::DarkGray,
@@ -198,14 +209,14 @@ impl Into<Color> for &BackgroundVariant {
             &BackgroundVariant::Flowerbush => Color::LightMagenta,
             &BackgroundVariant::Barrier => Color::Black,
             &BackgroundVariant::Water => Color::LightBlue,
-            _ => panic!("Unknown background"),
-        }
+            _ => return None,
+        })
     }
 }
 
 impl Into<Style> for &BackgroundVariant {
     fn into(self) -> Style {
-        Style::new().background_color(Some(self.into()))
+        Style::new().background_color(self.into())
     }
 }
 
@@ -215,6 +226,7 @@ impl Default for Player {
             update_draw: true,
             // icon: PLAYER_CHAR,
             position: Position::default(),
+            bag: Default::default(),
             previous_position: None,
             oxygen: PLAYER_INIT_OXYGEN,
         }
@@ -263,12 +275,22 @@ enum GameStatus {
 }
 
 #[derive(Default)]
+enum MessageType {
+    Death(String),
+    Sign(String),
+    Debug(String),
+    Pickup(char),
+    Bag(String),
+    #[default]
+    None,
+}
+
+#[derive(Default)]
 struct GameVar {
     game_status: GameStatus,
     control: Control,
     viewport_position: Position,
-    message: Option<(String, String)>,
-    show_message: bool,
+    message: MessageType,
     frame: i32,
     player: Player,
     map_layers: MapLayers,
@@ -322,7 +344,42 @@ impl MyGame {
         }
         player.move_to(next);
         player.interact_background(map_layers);
+
+        self.update_message_and_status();
     }
+
+    fn update_message_and_status(&mut self) {
+        let GameVar {
+            ref mut player,
+            ref mut map_layers,
+            ref mut message,
+            ref mut game_status,
+            ..
+        } = self.game_var;
+
+        if let Some(s) = map_layers.signs.get(&player.position) {
+            *message = MessageType::Sign(s.clone());
+        } else {
+            if let MessageType::Sign(_) = message {
+                *message = MessageType::None;
+            }
+        }
+
+        if let Some(c) = map_layers.objects.remove(&player.position) {
+            player.bag.push(c);
+            *message = MessageType::Pickup(c);
+        } else {
+            if let MessageType::Pickup(_) = message {
+                *message = MessageType::None;
+            }
+        }
+
+        if player.oxygen <= 0 {
+            *message = MessageType::Death("You died from drown, press Enter to restart".into());
+            *game_status = GameStatus::Died;
+        }
+    }
+
     fn update_viewport_position(&mut self) {
         let GameStatic {
             screen_size: (width, (game_height, message_height)),
@@ -351,7 +408,6 @@ impl MyGame {
         if bottom < VIEW_PADDING {
             viewport_position.1 += 1;
         }
-        // self.text = format!("top: {top}, left: {left}, bottom: {bottom}, right: {right}");
     }
 }
 
@@ -372,8 +428,9 @@ impl Controller for MyGame {
     fn on_event(&mut self, game: &mut Game, event: GameEvent) {
         let GameVar {
             ref mut control,
-            ref mut show_message,
+            ref mut message,
             ref game_status,
+            ref player,
             ..
         } = self.game_var;
         match game_status {
@@ -394,8 +451,23 @@ impl Controller for MyGame {
             SimpleEvent::Just(key_code) => match key_code {
                 KeyCode::Char(ch) => match ch {
                     't' => {
-                        // self.text = format!("vp: {:?}", game.screen_size());
-                        *show_message = !*show_message;
+                        // debug message
+                        if let MessageType::Debug(_) = message {
+                            *message = MessageType::None;
+                        } else {
+                            *message = MessageType::Debug(format!(
+                                "player pos: {}",
+                                ron::to_string(&player.position).unwrap()
+                            ));
+                        }
+                    }
+                    'b' => {
+                        // check bag
+                        if let MessageType::Bag(_) = message {
+                            *message = MessageType::None;
+                        } else {
+                            *message = MessageType::Bag(format!("{:?}", player.bag));
+                        } 
                     }
                     _ => {}
                 },
@@ -431,8 +503,6 @@ impl Controller for MyGame {
             ref viewport_position,
             ref mut message,
             ref mut frame,
-            ref mut show_message,
-            ref mut game_status,
             ..
         } = self.game_var;
 
@@ -458,31 +528,30 @@ impl Controller for MyGame {
         //     game.set_screen_char(30 + i as i32, 10, Some(StyledCharacter::new(ch)));
         // }
 
-        // Debug Message:
-        *message = Some((
-            "Test".into(),
-            format!(
-                "Pos: {}",
-                ron::to_string(&player.position).unwrap()
-            ),
-        ));
-
-        if player.oxygen <= 0 {
-            *message = Some((
-                "You Died".into(),
-                "You died from drown, press Enter to restart.".into(),
-            ));
-            *show_message = true;
-            *game_status = GameStatus::Died;
-        }
-
-        if *show_message {
-            if let Some((title, text)) = &message {
-                let msg = Message::new(text.clone()).title(title.clone());
+        match message {
+            MessageType::Sign(s) => {
+                let msg = Message::new(s.clone()).title("You saw a message on the sign".into());
                 game.set_message(Some(msg));
             }
-        } else {
-            game.set_message(None);
+            MessageType::Death(s) => {
+                let msg = Message::new(s.clone()).title("You died".into());
+                game.set_message(Some(msg));
+            }
+            MessageType::Pickup(c) => {
+                let msg = Message::new(format!("You pick up '{c}'")).title("Pick up an object".into());
+                game.set_message(Some(msg));
+            }
+            MessageType::Bag(s) => {
+                let msg = Message::new(s.clone()).title("Your bag has".into());
+                game.set_message(Some(msg));
+            }
+            MessageType::Debug(s) => {
+                let msg = Message::new(s.clone()).title("Debug".into());
+                game.set_message(Some(msg));
+            }
+            MessageType::None => {
+                game.set_message(None);
+            }
         }
 
         *frame += 1;
@@ -498,10 +567,6 @@ fn read_map_data() -> Result<RawGameMap, Box<dyn Error>> {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    println!("Welcome to AdventureRS");
-    println!("To get started, you should read the termgame documentation,");
-    println!("and try out getting a termgame UI to appear on your terminal.");
-
     let game_map = read_map_data()?;
 
     let mut controller = MyGame::new(game_map);
@@ -509,7 +574,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     run_game(
         &mut controller,
         GameSettings::new()
-            // The below are the defaults, but shown so you can edit them.
             .tick_duration(Duration::from_millis(50))
             .quit_event(Some(SimpleEvent::WithControl(KeyCode::Char('c')).into())),
     )?;
