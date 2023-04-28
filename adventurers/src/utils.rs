@@ -1,7 +1,7 @@
 use std::ops::{Add, AddAssign};
 
 use serde::{Deserialize, Serialize};
-use termgame::{KeyCode, ViewportLocation, Message, GameColor, GameStyle};
+use termgame::{GameColor, GameStyle, KeyCode, Message, ViewportLocation};
 
 #[derive(Copy, Clone, Default, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct Position(pub i32, pub i32);
@@ -128,9 +128,8 @@ impl Into<Option<Message>> for &MessageType {
     }
 }
 
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum BackgroundVariant {
+pub enum RawMapObject {
     Grass,
     Sand,
     Rock,
@@ -142,6 +141,54 @@ pub enum BackgroundVariant {
     Object(char),
 }
 
+pub enum MapObjectVariant {
+    Foreground(ForegroundVariant),
+    Background(BackgroundVariant),
+}
+
+impl Into<MapObjectVariant> for &RawMapObject {
+    fn into(self) -> MapObjectVariant {
+        use BackgroundVariant as B;
+        use ForegroundVariant as F;
+        use RawMapObject::*;
+        match self {
+            Object(c) => F::Object(*c).into(),
+            Sign(s) => F::Sign(s.clone()).into(),
+
+            Barrier => B::Barrier.into(),
+            Cinderblock => B::Cinderblock.into(),
+            Flowerbush => B::Flowerbush.into(),
+            Grass => B::Grass.into(),
+            Rock => B::Rock.into(),
+            Sand => B::Sand.into(),
+            Water => B::Water.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BackgroundVariant {
+    Grass,
+    Sand,
+    Rock,
+    Cinderblock,
+    Flowerbush,
+    Barrier,
+    Water,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ForegroundVariant {
+    Sign(String),
+    Object(char),
+}
+
+impl Into<MapObjectVariant> for ForegroundVariant {
+    fn into(self) -> MapObjectVariant {
+        MapObjectVariant::Foreground(self)
+    }
+}
+
 impl BackgroundVariant {
     pub fn is_barrier(&self) -> bool {
         self == &BackgroundVariant::Barrier
@@ -151,17 +198,23 @@ impl BackgroundVariant {
     }
 }
 
+impl Into<MapObjectVariant> for BackgroundVariant {
+    fn into(self) -> MapObjectVariant {
+        MapObjectVariant::Background(self)
+    }
+}
+
 impl Into<Option<GameColor>> for &BackgroundVariant {
     fn into(self) -> Option<GameColor> {
+        use BackgroundVariant::*;
         Some(match self {
-            &BackgroundVariant::Grass => GameColor::Green,
-            &BackgroundVariant::Sand => GameColor::LightYellow,
-            &BackgroundVariant::Rock => GameColor::DarkGray,
-            &BackgroundVariant::Cinderblock => GameColor::LightRed,
-            &BackgroundVariant::Flowerbush => GameColor::LightMagenta,
-            &BackgroundVariant::Barrier => GameColor::Black,
-            &BackgroundVariant::Water => GameColor::LightBlue,
-            _ => return None,
+            Grass => GameColor::Green,
+            Sand => GameColor::LightYellow,
+            Rock => GameColor::DarkGray,
+            Cinderblock => GameColor::LightRed,
+            Flowerbush => GameColor::LightMagenta,
+            Barrier => GameColor::Black,
+            Water => GameColor::LightBlue,
         })
     }
 }

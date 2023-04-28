@@ -4,22 +4,16 @@ use std::time::Duration;
 use termgame::{run_game, Controller, Game, GameEvent, GameSettings, KeyCode, SimpleEvent};
 
 mod utils;
-use utils::{Control, MessageType, Position};
+use utils::{Control, ForegroundVariant, MessageType, Position};
 
 mod map;
-use map::{RawGameMap, read_map_data, MapLayers};
+use map::{read_map_data, MapLayers, RawGameMap};
 
 mod player;
 use player::Player;
 
 /// if distance between player and border < padding, move viewport
 const VIEW_PADDING: i32 = 2;
-
-// #[derive(Debug, Clone, Copy)]
-// enum ObjectVariant {
-//     Player,
-//     Background(BackgroundVariant),
-// }
 
 #[derive(Default)]
 enum GameStatus {
@@ -100,18 +94,21 @@ impl MyGame {
             ..
         } = self.game_var;
 
-        if let Some(s) = map_layers.signs.get(&player.position) {
-            *message = MessageType::Sign(s.clone());
+        if let Some(foreground) = map_layers.foregrounds.get(&player.position) {
+            match foreground {
+                ForegroundVariant::Object(c) => {
+                    player.bag.push(*c);
+                    *message = MessageType::Pickup(*c);
+                    map_layers.remove_foreground(&player.position);
+                }
+                ForegroundVariant::Sign(s) => {
+                    *message = MessageType::Sign(s.clone());
+                }
+            }
         } else {
             if let MessageType::Sign(_) = message {
                 *message = MessageType::None;
             }
-        }
-
-        if let Some(c) = map_layers.objects.remove(&player.position) {
-            player.bag.push(c);
-            *message = MessageType::Pickup(c);
-        } else {
             if let MessageType::Pickup(_) = message {
                 *message = MessageType::None;
             }

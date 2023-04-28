@@ -3,15 +3,17 @@ use std::error::Error;
 use std::fs::read_to_string;
 use std::path::Path;
 
-use termgame::{GameColor, GameStyle, StyledCharacter};
+use termgame::StyledCharacter;
 
 use crate::player::Player;
-use crate::utils::{BackgroundVariant, Position};
+use crate::utils::{
+    BackgroundVariant, ForegroundVariant, MapObjectVariant, Position, RawMapObject,
+};
 
 const PLAYER_ICON: char = '☻';
 const FLAG: char = '⚑';
 
-pub type RawGameMap = HashMap<Position, BackgroundVariant>;
+pub type RawGameMap = HashMap<Position, RawMapObject>;
 
 pub fn read_map_data<P: AsRef<Path>>(path: P) -> Result<RawGameMap, Box<dyn Error>> {
     let content = read_to_string(path)?;
@@ -22,9 +24,8 @@ pub fn read_map_data<P: AsRef<Path>>(path: P) -> Result<RawGameMap, Box<dyn Erro
 #[derive(Default)]
 pub struct MapLayers {
     pub player: Position,
-    pub objects: HashMap<Position, char>,
-    pub signs: HashMap<Position, String>,
-    pub backgrounds: HashMap<Position, GameColor>,
+    pub foregrounds: HashMap<Position, ForegroundVariant>,
+    pub backgrounds: HashMap<Position, BackgroundVariant>,
     pub should_draw: Vec<Position>,
     pub waters: HashSet<Position>,
     pub barriers: HashSet<Position>,
@@ -34,17 +35,19 @@ impl MapLayers {
     /// render a position into StyledCharacter
     pub fn get(&self, position: &Position) -> Option<StyledCharacter> {
         let mut sc = StyledCharacter::new(' ');
-
-        if let Some(&c) = self.objects.get(position) {
-            sc.c = c;
+        if let Some(foreground) = self.foregrounds.get(position) {
+            match foreground {
+                ForegroundVariant::Object(c) => {
+                    sc.c = *c;
+                }
+                ForegroundVariant::Sign(_) => {
+                    sc.c = FLAG;
+                }
+            }
         }
 
-        if self.signs.contains_key(position) {
-            sc.c = FLAG;
-        }
-
-        if let Some(&color) = self.backgrounds.get(position) {
-            sc.style = Some(GameStyle::new().background_color(Some(color)));
+        if let Some(background) = self.backgrounds.get(position) {
+            sc.style = Some(background.into());
         }
 
         if self.player == *position {
@@ -81,26 +84,30 @@ impl MapLayers {
             .map(|position| (position, self.get(&position)))
             .collect()
     }
+    pub fn remove_foreground(&mut self, position: &Position) {
+        self.foregrounds.remove(position);
+        self.should_draw.push(*position);
+    }
 }
 
 impl From<&RawGameMap> for MapLayers {
     fn from(raw_game_map: &RawGameMap) -> Self {
         let mut map_layers = MapLayers::default();
-        for (position, background) in raw_game_map {
-            if background.is_barrier() {
-                map_layers.barriers.insert(*position);
-            }
-            if background.is_water() {
-                map_layers.waters.insert(*position);
-            }
-            if let Some(color) = background.into() {
-                map_layers.backgrounds.insert(*position, color);
-            }
-            if let BackgroundVariant::Object(c) = background {
-                map_layers.objects.insert(*position, *c);
-            }
-            if let BackgroundVariant::Sign(s) = background {
-                map_layers.signs.insert(*position, s.clone());
+        for (position, map_object) in raw_game_map {
+            match map_object.into() {
+                MapObjectVariant::Foreground(f) => {
+                    map_layers.foregrounds.insert(*position, f);
+                }
+                MapObjectVariant::Background(b) => {
+                    if b.is_barrier() {
+                        map_layers.barriers.insert(*position);
+                    }
+
+                    if b.is_water() {
+                        map_layers.waters.insert(*position);
+                    }
+                    map_layers.backgrounds.insert(*position, b);
+                }
             }
             map_layers.should_draw.push(*position);
         }
