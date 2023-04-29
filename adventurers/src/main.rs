@@ -238,7 +238,7 @@ impl Controller for MyGame {
 
         map_layers.update_player(player);
 
-        for (Position(x, y), sc) in map_layers.get_style_characters() {
+        for (Position(x, y), sc) in map_layers.get_style_characters(&player) {
             game.set_screen_char(x, y, sc);
         }
 

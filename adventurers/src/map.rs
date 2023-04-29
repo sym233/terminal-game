@@ -10,7 +10,6 @@ use crate::utils::{
     BackgroundVariant, ForegroundVariant, MapObjectVariant, Position, RawMapObject,
 };
 
-const PLAYER_ICON: char = '☻';
 const FLAG: char = '⚑';
 
 pub type RawGameMap = HashMap<Position, RawMapObject>;
@@ -33,7 +32,7 @@ pub struct MapLayers {
 
 impl MapLayers {
     /// render a position into StyledCharacter
-    pub fn get(&self, position: &Position) -> Option<StyledCharacter> {
+    pub fn get(&self, player: &Player, position: &Position) -> Option<StyledCharacter> {
         let mut sc = StyledCharacter::new(' ');
         if let Some(foreground) = self.foregrounds.get(position) {
             match foreground {
@@ -51,7 +50,7 @@ impl MapLayers {
         }
 
         if self.player == *position {
-            sc.c = PLAYER_ICON;
+            sc.c = player.icon;
         }
 
         Some(sc)
@@ -77,11 +76,11 @@ impl MapLayers {
     pub fn is_water(&self, position: &Position) -> bool {
         self.waters.contains(position)
     }
-    pub fn get_style_characters(&mut self) -> Vec<(Position, Option<StyledCharacter>)> {
+    pub fn get_style_characters(&mut self, player: &Player) -> Vec<(Position, Option<StyledCharacter>)> {
         let positions = self.should_draw.drain(..).collect::<Vec<_>>();
         positions
             .into_iter()
-            .map(|position| (position, self.get(&position)))
+            .map(|position| (position, self.get(player, &position)))
             .collect()
     }
     pub fn remove_foreground(&mut self, position: &Position) {

@@ -1,11 +1,12 @@
 use crate::map::MapLayers;
 use crate::utils::Position;
 
+const PLAYER_ICON: char = '☻';
 const PLAYER_INIT_OXYGEN: i32 = 10;
 
 pub struct Player {
     pub update_draw: bool,
-    // icon: char,
+    pub icon: char,
     pub position: Position,
     pub bag: Vec<char>,
     pub oxygen: i32,
@@ -31,7 +32,7 @@ impl Default for Player {
     fn default() -> Self {
         Player {
             update_draw: true,
-            // icon: PLAYER_CHAR,
+            icon: PLAYER_ICON,
             position: Default::default(),
             bag: Default::default(),
             previous_position: None,
