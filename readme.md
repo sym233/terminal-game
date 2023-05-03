@@ -2,7 +2,7 @@
 
 Write in rust, run in terminals
 
-Current work: map render and player interact.
+Current work: implement quest.
 
 ### Run
 ```sh
@@ -12,6 +12,7 @@ cargo run
 ### Operation
 - Arrow key to move player (displayed as ☻)
 - `b` check bag, to see what you have picked up
+- `q` toggle quest status.
 - `Ctrl + c` to quit
 
 ### Guide

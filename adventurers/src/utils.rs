@@ -101,26 +101,28 @@ pub enum MessageType {
     Debug(String),
     Pickup(char),
     Bag(String),
+    Quest(String),
     #[default]
     None,
 }
 
-impl Into<Option<(String, String)>> for &MessageType {
+impl Into<Option<(String, String)>> for MessageType {
     fn into(self) -> Option<(String, String)> {
-        Some(match self.clone() {
+        Some(match self {
             MessageType::Sign(s) => ("You saw a message on the sign".into(), s),
             MessageType::Death(s) => ("You died".into(), s),
             MessageType::Pickup(c) => ("Pick up an object".into(), format!("You pick up '{c}'")),
             MessageType::Bag(s) => ("Your bag has".into(), s),
+            MessageType::Quest(s) => ("Quest".into(), s),
             MessageType::Debug(s) => ("Debug".into(), s),
             MessageType::None => return None,
         })
     }
 }
 
-impl Into<Option<Message>> for &MessageType {
+impl Into<Option<Message>> for MessageType {
     fn into(self) -> Option<Message> {
-        if let Some((title, text)) = Into::<Option<(String, String)>>::into(self) {
+        if let Some((title, text)) = self.into() {
             Some(Message::new(text).title(title))
         } else {
             None
@@ -166,7 +168,7 @@ impl Into<MapObjectVariant> for &RawMapObject {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum BackgroundVariant {
     Grass,
     Sand,
@@ -224,3 +226,18 @@ impl Into<GameStyle> for &BackgroundVariant {
         GameStyle::new().background_color(self.into())
     }
 }
+
+// #[derive(Clone)]
+// pub enum Interactable {
+//     Sign(String),
+// }
+
+#[derive(Clone)]
+pub enum Event {
+    MoveTo(Position, Option<BackgroundVariant>),
+    // Pickup(char),
+    // Interact(Interactable),
+    Die(String),
+}
+
+

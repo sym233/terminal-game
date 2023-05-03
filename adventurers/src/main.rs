@@ -4,13 +4,16 @@ use std::time::Duration;
 use termgame::{run_game, Controller, Game, GameEvent, GameSettings, KeyCode, SimpleEvent};
 
 mod utils;
-use utils::{Control, ForegroundVariant, MessageType, Position};
+use utils::{Control, Event, ForegroundVariant, MessageType, Position};
 
 mod map;
 use map::{read_map_data, MapLayers, RawGameMap};
 
 mod player;
 use player::Player;
+
+mod quest;
+use quest::{Quest, Q1};
 
 /// if distance between player and border < padding, move viewport
 const VIEW_PADDING: i32 = 2;
@@ -31,6 +34,8 @@ struct GameVar {
     frame: i32,
     player: Player,
     map_layers: MapLayers,
+    events: Vec<Event>,
+    quests: Vec<Box<dyn Quest<Event>>>,
 }
 
 struct GameStatic {
@@ -56,9 +61,12 @@ impl MyGame {
     }
 
     fn init(&mut self, game: &Game) {
+        let q1 = Q1::new();
+
         self.game_static.screen_size = game.screen_size();
         self.game_var = GameVar {
             map_layers: MapLayers::from(&self.game_static.raw_game_map),
+            quests: vec![Box::new(q1)],
             ..Default::default()
         }
     }
@@ -91,8 +99,14 @@ impl MyGame {
             ref mut map_layers,
             ref mut message,
             ref mut game_status,
+            events: ref mut actions,
             ..
         } = self.game_var;
+
+        actions.push(Event::MoveTo(
+            player.position,
+            map_layers.backgrounds.get(&player.position).cloned(),
+        ));
 
         if let Some(foreground) = map_layers.foregrounds.get(&player.position) {
             match foreground {
@@ -116,6 +130,9 @@ impl MyGame {
 
         if player.oxygen <= 0 {
             *message = MessageType::Death("You died from drown, press Enter to restart".into());
+            actions.push(Event::Die(
+                "You died from drown, press Enter to restart".into(),
+            ));
             *game_status = GameStatus::Died;
         }
     }
@@ -171,6 +188,7 @@ impl Controller for MyGame {
             ref mut message,
             ref game_status,
             ref player,
+            ref quests,
             ..
         } = self.game_var;
         match game_status {
@@ -211,6 +229,15 @@ impl Controller for MyGame {
                                     *message = MessageType::Bag(format!("{:?}", player.bag));
                                 }
                             }
+
+                            'q' => {
+                                // check quest
+                                if let MessageType::Quest(_) = message {
+                                    *message = MessageType::None;
+                                } else {
+                                    *message = MessageType::Quest(quests[0].to_string());
+                                }
+                            }
                             _ => {}
                         };
                     }
@@ -233,6 +260,8 @@ impl Controller for MyGame {
             ref viewport_position,
             ref mut message,
             ref mut frame,
+            ref mut events,
+            ref mut quests,
             ..
         } = self.game_var;
 
@@ -242,9 +271,14 @@ impl Controller for MyGame {
             game.set_screen_char(x, y, sc);
         }
 
+        for event in events.drain(..) {
+            for quest in quests.iter_mut() {
+                quest.update(&event)
+            }
+        }
         control.clear();
         game.set_viewport(<Position>::into(*viewport_position));
-        game.set_message((&*message).into());
+        game.set_message(message.clone().into());
 
         *frame += 1;
     }
