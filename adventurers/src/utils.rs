@@ -1,4 +1,4 @@
-use std::ops::{Add, AddAssign};
+use std::{ops::{Add, AddAssign}, fmt::Display};
 
 use serde::{Deserialize, Serialize};
 use termgame::{GameColor, GameStyle, KeyCode, Message, ViewportLocation};
@@ -227,15 +227,31 @@ impl Into<GameStyle> for &BackgroundVariant {
     }
 }
 
+impl Display for BackgroundVariant {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", match self {
+            BackgroundVariant::Grass => "grass",
+            BackgroundVariant::Sand => "sand",
+            BackgroundVariant::Rock => "rock",
+            BackgroundVariant::Cinderblock => "cinderblock",
+            BackgroundVariant::Flowerbush => "flowerbush",
+            BackgroundVariant::Barrier => "barrier",
+            BackgroundVariant::Water => "water",
+        })
+    }
+}
+
 // #[derive(Clone)]
 // pub enum Interactable {
 //     Sign(String),
 // }
 
+pub type Item = char;
+
 #[derive(Clone)]
 pub enum Event {
     MoveTo(Position, Option<BackgroundVariant>),
-    // Pickup(char),
+    Pickup(Item),
     // Interact(Interactable),
     Die(String),
 }

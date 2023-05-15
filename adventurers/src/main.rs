@@ -4,7 +4,7 @@ use std::time::Duration;
 use termgame::{run_game, Controller, Game, GameEvent, GameSettings, KeyCode, SimpleEvent};
 
 mod utils;
-use utils::{Control, Event, ForegroundVariant, MessageType, Position};
+use utils::{Control, Event, ForegroundVariant, MessageType, Position, BackgroundVariant};
 
 mod map;
 use map::{read_map_data, MapLayers, RawGameMap};
@@ -13,7 +13,7 @@ mod player;
 use player::Player;
 
 mod quest;
-use quest::{Quest, Q1};
+use quest::{Quest, StepQuest, PickupQuest, CompoundQuest};
 
 /// if distance between player and border < padding, move viewport
 const VIEW_PADDING: i32 = 2;
@@ -61,12 +61,15 @@ impl MyGame {
     }
 
     fn init(&mut self, game: &Game) {
-        let q1 = Q1::new();
+        let q1 = StepQuest::new(BackgroundVariant::Water, 5);
+        let q2 = PickupQuest::new('x', 3);
+
+        let q = CompoundQuest::new(vec![Box::new(q1), Box::new(q2)]);
 
         self.game_static.screen_size = game.screen_size();
         self.game_var = GameVar {
             map_layers: MapLayers::from(&self.game_static.raw_game_map),
-            quests: vec![Box::new(q1)],
+            quests: vec![Box::new(q)],
             ..Default::default()
         }
     }
@@ -99,11 +102,11 @@ impl MyGame {
             ref mut map_layers,
             ref mut message,
             ref mut game_status,
-            events: ref mut actions,
+            ref mut events,
             ..
         } = self.game_var;
 
-        actions.push(Event::MoveTo(
+        events.push(Event::MoveTo(
             player.position,
             map_layers.backgrounds.get(&player.position).cloned(),
         ));
@@ -113,6 +116,8 @@ impl MyGame {
                 ForegroundVariant::Object(c) => {
                     player.bag.push(*c);
                     *message = MessageType::Pickup(*c);
+                    events.push(Event::Pickup(*c));
+
                     map_layers.remove_foreground(&player.position);
                 }
                 ForegroundVariant::Sign(s) => {
@@ -130,7 +135,7 @@ impl MyGame {
 
         if player.oxygen <= 0 {
             *message = MessageType::Death("You died from drown, press Enter to restart".into());
-            actions.push(Event::Die(
+            events.push(Event::Die(
                 "You died from drown, press Enter to restart".into(),
             ));
             *game_status = GameStatus::Died;
